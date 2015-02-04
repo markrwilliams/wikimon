@@ -135,7 +135,6 @@ class Monitor(irc.IRCClient):
             return
 
         parsed = parse_irc_message(msg, NON_MAIN_NS)
-        bcast_log.info(self.geoip_db_monitor.geoip_db)
         geo_loc = geolocated_anonymous_user(self.geoip_db_monitor.geoip_db,
                                             parsed)
         if geo_loc:
@@ -184,14 +183,10 @@ class BroadcastServerProtocol(WebSocketServerProtocol):
 
 
 class BroadcastServerFactory(WebSocketServerFactory):
-    def __init__(self, url, geoip_db, geoip_update_interval,
-                 lang, project, *a, **kw):
+    def __init__(self, url, *a, **kw):
         WebSocketServerFactory.__init__(self, url, *a, **kw)
         self.clients = set()
         self.tickcount = 0
-
-        start_monitor(self, geoip_db, geoip_update_interval,
-                      lang, project)  # blargh
 
     def tick(self):
         self.tickcount += 1
@@ -270,14 +265,14 @@ def main():
         print 'warning: invalid log level'
         bcast_log.setLevel(logging.WARN)
     ws_listen_addr = 'ws://localhost:%d' % (args.port,)
-    ServerFactory = BroadcastServerFactory
-    factory = ServerFactory(ws_listen_addr,
-                            project=args.project,
-                            lang=args.lang,
-                            geoip_db=args.geoip_db,
-                            geoip_update_interval=args.geoip_update_interval,
-                            debug=DEBUG,
-                            debugCodePaths=DEBUG)
+    factory = BroadcastServerFactory(ws_listen_addr,
+                                     debug=DEBUG,
+                                     debugCodePaths=DEBUG)
+    start_monitor(factory,
+                  geoip_db=args.geoip_db,
+                  geoip_update_interval=args.geoip_update_interval,
+                  lang=args.lang, project=args.project)
+
     factory.protocol = BroadcastServerProtocol
     factory.setProtocolOptions(allowHixie76=True)
     listenWS(factory)
