@@ -2,6 +2,7 @@
 
 from json import dumps
 from os.path import dirname, abspath
+import itertools
 
 from twisted.words.protocols import irc
 from twisted.internet import reactor, protocol
@@ -111,6 +112,7 @@ def geolocated_anonymous_user(geoip_db, parsed, lang='en'):
 
 class Monitor(irc.IRCClient):
     GEO_IP_KEY = 'geo_ip'
+    nickname = 'wikimon'
 
     def __init__(self, geoip_db_monitor, bsf, nmns, factory):
         self.geoip_db_monitor = geoip_db_monitor
@@ -143,7 +145,7 @@ class Monitor(irc.IRCClient):
         if geo_loc:
             parsed[self.GEO_IP_KEY] = geo_loc
             # Which revisions to broadcast?
-        self.broadcaster.broadcast(dumps(parsed, sort_keys=True))
+        self.broadcaster.broadcast(parsed)
 
 
 class MonitorFactory(ReconnectingClientFactory):
@@ -173,8 +175,35 @@ class MonitorFactory(ReconnectingClientFactory):
 
 
 class BroadcastServerProtocol(WebSocketServerProtocol):
+    PARAM_WHITELIST = frozenset(['hashtags', 'flags'])
+    filters = ()
+
     def onOpen(self):
+        bcast_log.info("Client connected with version: %d",
+                       self.websocket_version)
+        self.filters = self.parse_filters(self.http_request_params)
         self.factory.register(self)
+
+    def parse_filters(self, params):
+        return [getattr(self, 'parse_' + p)(self._split_values(params[p]))
+                for p in self.PARAM_WHITELIST & params.viewkeys()]
+
+    def _split_values(self, multivalues, split='|'):
+        return itertools.chain.from_iterable(values.split(split)
+                                             for values in multivalues)
+
+    def parse_hashtags(self, values):
+        self.hashtags = hashtags = set(values)
+
+        def extract_hashtags(msg_dict):
+            return set(msg_dict['hashtags']) & hashtags
+
+        return extract_hashtags
+
+    def sendMessage(self, msg):
+        if not self.filters or any(f(msg) for f in self.filters):
+            dumped = dumps(msg, sort_keys=True)
+            WebSocketServerProtocol.sendMessage(self, dumped)
 
     def onMessage(self, msg, binary):
         if not binary:
